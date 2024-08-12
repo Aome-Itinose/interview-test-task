@@ -103,7 +103,7 @@ public class AccumulatorTest {
         Long processId = counter.getAndIncrement();
         accumulator.acceptAll(buildList(processId, FINAL2, MID2, START1, MID1, MID2, FINAL1));
         List<StateObject> actual = accumulator.drain(processId);
-        checkSequenceNumbers(actual, 3, 4, 2, 6);
+        checkSequenceNumbers(actual, 3, 4, 5, 6);
         checkStates(actual, START1, MID1, MID2, FINAL1);
     }
 
