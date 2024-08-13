@@ -11,28 +11,25 @@ import java.util.*;
  * @since 12.08.2024
  */
 public class AccumulatorImpl implements Accumulator {
-    private final Map<Long, ArrayDeque<StateObject>> processes = new HashMap<>();
+    private final Map<Long, ArrayList<StateObject>> unorderedProcessesStates = new HashMap<>();
     private final Map<Long, State> processesLastStates = new HashMap<>();
 
     @Override
     public void accept(StateObject stateObject) {
-        ArrayDeque<StateObject> currentProcessStates = getCurrentProcessStates(stateObject.getProcessId());
-
-        if (isValidStateObject(stateObject, currentProcessStates)) {
-            currentProcessStates.addLast(stateObject);
-        }
+        ArrayList<StateObject> currentUnorderedStates = getCurrentUnorderedStates(stateObject.getProcessId());
+        currentUnorderedStates.add(stateObject);
     }
 
     /**
-     * Если есть еще не выгруженные уведомления у процесса
-     * @param processId , возвращает
+     * Возвращает невыгруженные процессы
+     * @param processId , или пустой список
      */
-    private ArrayDeque<StateObject> getCurrentProcessStates(Long processId) {
-        if(!processes.containsKey(processId)){
-            processes.put(processId, new ArrayDeque<>());
+    private ArrayList<StateObject> getCurrentUnorderedStates(Long processId) {
+        if (!unorderedProcessesStates.containsKey(processId)) {
+            unorderedProcessesStates.put(processId, new ArrayList<>());
         }
 
-        return processes.get(processId);
+        return unorderedProcessesStates.get(processId);
     }
 
     @Override
@@ -42,95 +39,80 @@ public class AccumulatorImpl implements Accumulator {
 
     @Override
     public List<StateObject> drain(Long processId) {
-        ArrayDeque<StateObject> currentProcessStates = processes.get(processId);
-
-        updateLastProcessStates(processId, currentProcessStates);
-        processes.remove(processId);
-        return currentProcessStates.stream().toList();
+        return orderStates(processId);
     }
 
-    /**
-     * Обновляет последнее состояние текущего процесса, если состояние менялось.
-     */
-    private void updateLastProcessStates(Long processId, ArrayDeque<StateObject> currentProcessStates) {
-        if(!currentProcessStates.isEmpty()) {
-            processesLastStates.put(processId, currentProcessStates.getLast().getState());
+    private ArrayList<StateObject> orderStates(Long processId) {
+        ArrayList<StateObject> currentProcessStates = unorderedProcessesStates.get(processId);
+        ArrayList<StateObject> result = new ArrayList<>();
+
+        if (!processesLastStates.containsKey(processId)) {
+            orderStartStatesIfExist(processId, currentProcessStates, result);
         }
+        if (processesLastStates.containsKey(processId) &&
+                !processesLastStates.get(processId).equals(State.FINAL1) &&
+                !processesLastStates.get(processId).equals(State.FINAL2)) {
+
+            orderMidStatesIfExist(processId, currentProcessStates, result);
+            orderFinalStatesIfExist(processId, currentProcessStates, result);
+        }
+        unorderedProcessesStates.remove(processId);
+        return result;
     }
 
-    /**
-     * Проверяет на валидность уведомление
-     */
-    private boolean isValidStateObject(StateObject stateObject, ArrayDeque<StateObject> currentProcessStates) {
-        if(currentProcessStates.isEmpty()) {
-            return isFirstStateInAcceptValid(stateObject);
-        }else{
-            return isNextStateInAcceptValid(stateObject, currentProcessStates);
+    private void orderStartStatesIfExist(Long processId, ArrayList<StateObject> currentProcessStates, ArrayList<StateObject> result) {
+        List<StateObject> starts;
+        if (currentProcessStates.stream().anyMatch(e -> e.getState().equals(State.START1))) {
+            starts = currentProcessStates.stream().filter(e -> e.getState().equals(State.START1)).toList();
+            result.add(starts.get(0));
+
+            processesLastStates.put(processId, State.START1);
+
+        } else if (currentProcessStates.stream().anyMatch(e -> e.getState().equals(State.START2))) {
+            starts = currentProcessStates.stream().filter(e -> e.getState().equals(State.START2)).toList();
+            result.add(starts.get(0));
+
+            processesLastStates.put(processId, State.START2);
+
         }
     }
-    /**
-     * Проверка на валидность, если после выгрузки еще не было валидных состояний
-     */
-    private boolean isFirstStateInAcceptValid(StateObject stateObject) {
-        if(!processesLastStates.containsKey(stateObject.getProcessId())) {
-            return stateObject.getState().equals(State.START1) || stateObject.getState().equals(State.START2);
-        }
+    private void orderMidStatesIfExist(Long processId, ArrayList<StateObject> currentProcessStates, ArrayList<StateObject> result) {
+        if (currentProcessStates.stream().anyMatch(e -> e.getState().equals(State.MID1) || e.getState().equals(State.MID2))) {
+            List<StateObject> mid1List = currentProcessStates.stream().filter(e -> e.getState().equals(State.MID1)).toList();
+            List<StateObject> mid2List = new ArrayList<>(currentProcessStates.stream().filter(e -> e.getState().equals(State.MID2)).toList());
 
-        State lastState = processesLastStates.get(stateObject.getProcessId());
-        switch (stateObject.getState()) {
-            case START1, START2 -> {
-                return false;
+            State lastState = processesLastStates.get(processId);
+            if (lastState.equals(State.MID1) && !mid2List.isEmpty()) {
+                result.add(mid2List.get(0));
+                mid2List.remove(0);
+                lastState = State.MID2;
             }
-            case MID1 -> {
-                return lastState.equals(State.START1) ||
-                        lastState.equals(State.START2) ||
-                        lastState.equals(State.MID2);
+
+            int pairCounts = Math.min(mid2List.size(), mid1List.size());
+            int i;
+            for (i = 0; i < pairCounts; i++) {
+                result.add(mid1List.get(i));
+                result.add(mid2List.get(i));
+                lastState = State.MID2;
             }
-            case MID2 -> {
-                return lastState.equals(State.MID1);
+            if (i < mid1List.size() && !lastState.equals(State.MID1)) {
+                result.add(mid1List.get(i));
+
+                lastState = State.MID1;
             }
-            case FINAL1, FINAL2 -> {
-                return !(lastState.equals(State.FINAL1) || lastState.equals(State.FINAL2));
-            }
+            processesLastStates.put(processId, lastState);
         }
-        return false;
     }
-    /**
-     * Проверка на валидность, если после выгрузки уже были валидные состояния
-     */
-    private boolean isNextStateInAcceptValid(StateObject stateObject, ArrayDeque<StateObject> currentProcessStates) {
-        State lastState = currentProcessStates.getLast().getState();
-
-        switch (stateObject.getState()) {
-            case START1 -> {
-                if(lastState.equals(State.START2)) {
-                    currentProcessStates.removeLast();
-                    return true;
-                }
-                return false;
-            }
-            case START2 -> {
-                return false;
-            }
-            case MID1 -> {
-                return lastState.equals(State.START1) ||
-                        lastState.equals(State.START2) ||
-                        lastState.equals(State.MID2);
-            }
-            case MID2 -> {
-                return lastState.equals(State.MID1);
-            }
-            case FINAL1 -> {
-                if(lastState.equals(State.FINAL2)) {
-                    currentProcessStates.removeLast();
-                    return true;
-                }
-                return !lastState.equals(State.FINAL1);
-            }
-            case FINAL2 -> {
-                return !lastState.equals(State.FINAL2);
-            }
+    private void orderFinalStatesIfExist(Long processId, ArrayList<StateObject> currentProcessStates, ArrayList<StateObject> result) {
+        List<StateObject> finals;
+        if(currentProcessStates.stream().anyMatch(e -> e.getState().equals(State.FINAL1))){
+            finals = currentProcessStates.stream().filter(e -> e.getState().equals(State.FINAL1)).toList();
+            result.add(finals.get(0));
+            processesLastStates.put(processId, State.FINAL1);
+        }else if(currentProcessStates.stream().anyMatch(e -> e.getState().equals(State.FINAL2))){
+            finals = currentProcessStates.stream().filter(e -> e.getState().equals(State.FINAL2)).toList();
+            result.add(finals.get(0));
+            processesLastStates.put(processId, State.FINAL2);
         }
-        return false;
     }
 }
