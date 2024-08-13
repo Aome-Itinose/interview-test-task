@@ -23,6 +23,7 @@ public class MyCustomAccumulatorTest {
         checkSequenceNumbers(actual, 4, 1, 3, 2);
         checkStates(actual, START1, MID1, MID2, MID1);
     }
+
     @Test
     public void case2() {
         Long processId = counter.getAndIncrement();
@@ -30,6 +31,7 @@ public class MyCustomAccumulatorTest {
         List<StateObject> actual = accumulator.drain(processId);
         checkSequenceNumbers(actual);
     }
+
     @Test
     public void case3() {
         Long processId = counter.getAndIncrement();
@@ -42,6 +44,19 @@ public class MyCustomAccumulatorTest {
         actual = accumulator.drain(processId);
         checkSequenceNumbers(actual, 5);
         checkStates(actual, FINAL1);
+    }
+
+    @Test
+    public void case4() {
+        Long processId = counter.getAndIncrement();
+        accumulator.acceptAll(buildList(processId, MID2, FINAL2, START2, MID1, START1, MID2, MID1));
+        List<StateObject> actual = accumulator.drain(processId);
+        checkSequenceNumbers(actual, 5, 4, 1, 7, 6, 2);
+        checkStates(actual, START1, MID1, MID2, MID1, MID2, FINAL2);
+
+        accumulator.acceptAll(buildList(processId, FINAL1));
+        actual = accumulator.drain(processId);
+        checkSequenceNumbers(actual);
     }
 
     private void checkStates(List<StateObject> stateObjects, State... expected) {
